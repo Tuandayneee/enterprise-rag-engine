@@ -1,0 +1,92 @@
+services:
+  # 1. FastAPI Application Container
+  fastapi_app:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    container_name: enterprise-rag-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - POSTGRES_HOST=postgres_pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=rag_enterprise
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LLM_PROVIDER=ollama
+      - LLM_BASE_URL=http://ollama_vllm:11434/v1
+      - LLM_MODEL=qwen2.5:7b-instruct
+    depends_on:
+      postgres_pgvector:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - rag-enterprise-network
+
+  # 2. PostgreSQL with pgvector Container
+  postgres_pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: enterprise-postgres-pgvector
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=rag_enterprise
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+      - ../src/db/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d rag_enterprise"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag-enterprise-network
+
+  # 3. Redis Cache & Rate Limiting Container
+  redis:
+    image: redis:7.2-alpine
+    container_name: enterprise-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - rag-enterprise-network
+
+  # 4. Ollama / vLLM Serving Container
+  ollama_vllm:
+    image: ollama/ollama:latest
+    container_name: enterprise-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - rag-enterprise-network
+
+volumes:
+  pgvector_data:
+  redis_data:
+  ollama_models:
+
+networks:
+  rag-enterprise-network:
+    driver: bridge
