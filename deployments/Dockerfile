@@ -1,4 +1,4 @@
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -14,13 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Cài đặt thư viện Python
+# Cài đặt thư viện Python (tối ưu bản CPU cho PyTorch để giảm kích thước image)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 # Copy mã nguồn
 COPY src/ /app/src/
+COPY app/ /app/app/
 COPY scripts/ /app/scripts/
+COPY main.py /app/main.py
 COPY .env.example /app/.env
 
 # Chạy với user bảo mật không phải root

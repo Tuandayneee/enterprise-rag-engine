@@ -5,8 +5,17 @@ from src.models import Chunk, Citation
 
 class AntiHallucinationGuard:
     """
-    Bộ kiểm soát ảo giác (Guardrails) & trích dẫn nguồn ngữ cảnh (Source Citation).
+    Bộ kiểm soát ảo giác (Guardrails), lọc Prompt Injection, ẩn PII & trích dẫn nguồn ngữ cảnh (Source Citation).
     """
+
+    INJECTION_PATTERNS = [
+        r"ignore\s+(all\s+)?previous\s+instructions",
+        r"bỏ\s+qua\s+(mọi\s+)?hướng\s+dẫn\s+trước",
+        r"system\s*prompt",
+        r"you\s+are\s+now\s+dan",
+        r"jailbreak",
+        r"forget\s+everything",
+    ]
 
     DEFENSIVE_SYSTEM_PROMPT = """Bạn là trợ lý AI chuyên gia giải đáp thông tin kỹ thuật cấp doanh nghiệp.
 
@@ -20,7 +29,43 @@ QUY TẮC PHÒNG VỆ CHỐNG ẢO GIÁC (BẮT BUỘC TUÂN THỦ TUYỆT ĐỐ
 """
 
     @classmethod
-    def assemble_prompt(cls, question: str, retrieved_chunks: List[Chunk]) -> Tuple[str, str, List[Citation]]:
+    def validate_query(cls, query: str) -> Tuple[bool, str]:
+        """
+        Kiểm tra đầu vào chống tấn công Prompt Injection.
+        Trả về (is_safe, message).
+        """
+        if not query or not query.strip():
+            return False, "Câu hỏi không được để trống."
+        q_lower = query.lower()
+        for pattern in cls.INJECTION_PATTERNS:
+            if re.search(pattern, q_lower):
+                return (
+                    False,
+                    "Truy vấn bị từ chối do phát hiện dấu hiệu Prompt Injection vi phạm chính sách bảo mật.",
+                )
+        return True, "OK"
+
+    @classmethod
+    def redact_pii(cls, text: str) -> str:
+        """
+        Che giấu thông tin nhạy cảm (Email, Số điện thoại) trước khi đưa vào log hoặc prompt.
+        """
+        text = re.sub(
+            r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+",
+            "[EMAIL_REDACTED]",
+            text,
+        )
+        text = re.sub(
+            r"\b(?:\+84|0)[35789][0-9]{8}\b",
+            "[PHONE_REDACTED]",
+            text,
+        )
+        return text
+
+    @classmethod
+    def assemble_prompt(
+        cls, question: str, retrieved_chunks: List[Chunk]
+    ) -> Tuple[str, str, List[Citation]]:
         citations: List[Citation] = []
         context_blocks = []
 
@@ -46,7 +91,9 @@ QUY TẮC PHÒNG VỆ CHỐNG ẢO GIÁC (BẮT BUỘC TUÂN THỦ TUYỆT ĐỐ
             )
             context_blocks.append(block)
 
-        context_str = "\n".join(context_blocks) if context_blocks else "Không có ngữ cảnh nào."
+        context_str = (
+            "\n".join(context_blocks) if context_blocks else "Không có ngữ cảnh nào."
+        )
 
         user_prompt = f"""=== TÀI LIỆU THAM KHẢO ===
 {context_str}
@@ -65,6 +112,5 @@ Hãy trả lời câu hỏi trên theo đúng quy tắc chống ảo giác và t
         """
         if "Không tìm thấy thông tin trong tài liệu" in answer:
             return True
-        # Kiểm tra sự xuất hiện của dấu ngoặc vuông chứa nguồn
         has_bracket_citation = bool(re.search(r"\[.*?\]", answer))
         return has_bracket_citation or len(citations) > 0

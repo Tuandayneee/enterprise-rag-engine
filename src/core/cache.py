@@ -24,6 +24,7 @@ class RedisCacheManager:
     def _is_port_open(self, host: str, port: int, timeout: float = 0.05) -> bool:
         try:
             import socket
+
             target_host = "127.0.0.1" if host in ["localhost", "127.0.0.1"] else host
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(timeout)
@@ -33,12 +34,15 @@ class RedisCacheManager:
 
     def _init_redis(self):
         if not self._is_port_open(self.settings.redis_host, self.settings.redis_port):
-            logger.info("Redis server offline. Kích hoạt In-Memory Cache & Rate Limiter.")
+            logger.info(
+                "Redis server offline. Kích hoạt In-Memory Cache & Rate Limiter."
+            )
             self.redis_client = None
             return
 
         try:
             import redis
+
             self.redis_client = redis.Redis(
                 host=self.settings.redis_host,
                 port=self.settings.redis_port,
@@ -49,7 +53,9 @@ class RedisCacheManager:
                 decode_responses=True,
             )
             self.redis_client.ping()
-            logger.info(f"Kết nối Redis thành công tại {self.settings.redis_host}:{self.settings.redis_port}")
+            logger.info(
+                f"Kết nối Redis thành công tại {self.settings.redis_host}:{self.settings.redis_port}"
+            )
         except Exception as e:
             logger.info(f"Lỗi khởi tạo Redis ({e}). Dùng In-Memory.")
             self.redis_client = None
@@ -63,11 +69,14 @@ class RedisCacheManager:
             return False
 
     # ------------------ CACHE-ASIDE PATTERN ------------------
-    def get_cached_response(self, query: str, config_prefix: str = "") -> Optional[dict]:
+    def get_cached_response(
+        self, query: str, config_prefix: str = ""
+    ) -> Optional[dict]:
         """
         Kiểm tra Semantic / Hash Cache. Nếu Hit -> Trả về ngay lập tức (P99 < 10ms).
         """
-        key = f"rag_query_cache:{hashlib.md5((query + config_prefix).encode('utf-8')).hexdigest()}"
+        digest = hashlib.md5((query + config_prefix).encode("utf-8")).hexdigest()
+        key = f"rag_query_cache:{digest}"
         if self.redis_client:
             try:
                 cached = self.redis_client.get(key)
@@ -82,7 +91,8 @@ class RedisCacheManager:
         return None
 
     def set_cached_response(self, query: str, data: dict, config_prefix: str = ""):
-        key = f"rag_query_cache:{hashlib.md5((query + config_prefix).encode('utf-8')).hexdigest()}"
+        digest = hashlib.md5((query + config_prefix).encode("utf-8")).hexdigest()
+        key = f"rag_query_cache:{digest}"
         ttl = self.settings.redis_cache_ttl
         if self.redis_client:
             try:
@@ -94,6 +104,19 @@ class RedisCacheManager:
                 "data": data,
                 "expires_at": time.time() + ttl,
             }
+
+    def invalidate_all(self):
+        """
+        Xóa toàn bộ query cache khi có tài liệu mới được nạp hoặc xóa khỏi kho tri thức.
+        """
+        if self.redis_client:
+            try:
+                keys = self.redis_client.keys("rag_query_cache:*")
+                if keys:
+                    self.redis_client.delete(*keys)
+            except Exception:
+                pass
+        self._in_memory_cache.clear()
 
     # ------------------ SLIDING WINDOW RATE LIMITER ------------------
     def check_rate_limit(self, client_id: str) -> Tuple[bool, int]:
@@ -124,7 +147,9 @@ class RedisCacheManager:
         if client_id not in self._in_memory_rate_limits:
             self._in_memory_rate_limits[client_id] = []
 
-        timestamps = [ts for ts in self._in_memory_rate_limits[client_id] if ts > now - window]
+        timestamps = [
+            ts for ts in self._in_memory_rate_limits[client_id] if ts > now - window
+        ]
         self._in_memory_rate_limits[client_id] = timestamps
 
         if len(timestamps) < limit:

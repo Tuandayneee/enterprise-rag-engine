@@ -1,5 +1,11 @@
-from src.pipeline.chunker import FixedSizeChunker, RecursiveCharacterChunker, SemanticChunker, ChunkingBenchmark
-from src.pipeline.extractor import DocumentExtractor
+from src.models import ChunkStrategy
+from src.pipeline.chunker import (
+    FixedSizeChunker,
+    RecursiveCharacterChunker,
+    SemanticChunker,
+    ChunkerFactory,
+    ChunkingBenchmark,
+)
 
 
 def test_fixed_size_chunker():
@@ -33,6 +39,22 @@ def test_semantic_chunker():
     assert len(chunks) > 0
     assert chunks[0].embedding is not None
     assert len(chunks[0].embedding) > 0
+
+
+def test_chunker_factory_all_strategies():
+    text = "Kiểm thử ChunkerFactory tự động sinh vector embedding cho cả 3 chiến lược."
+    for strat in [
+        ChunkStrategy.FIXED_SIZE,
+        ChunkStrategy.RECURSIVE,
+        ChunkStrategy.SEMANTIC,
+    ]:
+        chunks = ChunkerFactory.chunk_document(
+            text=text, document_id=f"doc_{strat.value}", strategy=strat
+        )
+        assert len(chunks) > 0
+        assert chunks[0].strategy == strat
+        assert chunks[0].embedding is not None
+        assert len(chunks[0].embedding) > 0
 
 
 def test_chunking_benchmark():

@@ -6,8 +6,7 @@ from src.core.config import get_settings
 from src.api.routes import router
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
 )
 logger = logging.getLogger("Enterprise-RAG")
 
@@ -20,7 +19,9 @@ async def lifespan(app: FastAPI):
     logger.info("   - Offline Ingestion: Semantic Chunking -> pgvector / BM25      ")
     logger.info("   - Online Query: Redis Cache -> Hybrid Search -> RRF -> Rerank  ")
     logger.info("   - LLM Serving: vLLM / Ollama -> Defensive Guardrails -> SSE    ")
-    logger.info(f"   Environment: {settings.app_env.upper()} | Port: {settings.app_port}")
+    logger.info(
+        f"   Environment: {settings.app_env.upper()} | Port: {settings.app_port}"
+    )
     logger.info("==================================================================")
     yield
     logger.info("Enterprise RAG Engine đã dừng hoạt động an toàn.")
@@ -54,5 +55,8 @@ app = create_application()
 
 if __name__ == "__main__":
     import uvicorn
+
     settings = get_settings()
-    uvicorn.run("src.main:app", host=settings.app_host, port=settings.app_port, reload=True)
+    uvicorn.run(
+        "src.main:app", host=settings.app_host, port=settings.app_port, reload=True
+    )

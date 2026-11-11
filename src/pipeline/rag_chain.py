@@ -3,7 +3,7 @@ import time
 import asyncio
 import logging
 from typing import AsyncIterator, List, Optional
-from src.models import Chunk, ChatQuery, ChatResponse
+from src.models import Chunk, ChatQuery, ChatResponse, SearchQuery
 from src.core.config import get_settings
 from src.core.cache import RedisCacheManager
 from src.core.guardrails import AntiHallucinationGuard
@@ -31,8 +31,27 @@ class CustomRAGChain:
         t0 = time.perf_counter()
         question = chat_query.question.strip()
 
+        # 0. KIỂM TRA INPUT GUARDRAILS (CHỐNG PROMPT INJECTION)
+        is_safe, safety_msg = AntiHallucinationGuard.validate_query(question)
+        if not is_safe:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            return ChatResponse(
+                question=question,
+                answer=safety_msg,
+                citations=[],
+                retrieved_chunks=0,
+                cached=False,
+                execution_time_ms=round(elapsed_ms, 2),
+            )
+
         # 1. KIỂM TRA REDIS CACHE (CACHE-ASIDE PATTERN)
-        cached = self.cache_manager.get_cached_response(question, config_prefix=str(chat_query.top_k))
+        filter_str = (
+            json.dumps(chat_query.filters, sort_keys=True) if chat_query.filters else ""
+        )
+        config_prefix = f"{chat_query.top_k}:{filter_str}"
+        cached = self.cache_manager.get_cached_response(
+            question, config_prefix=config_prefix
+        )
         if cached:
             resp = ChatResponse(**cached)
             resp.cached = True
@@ -40,9 +59,13 @@ class CustomRAGChain:
             return resp
 
         # 2. HYBRID SEARCH RETRIEVAL (Dense + Sparse + RRF + Reranker)
-        from src.models import SearchQuery
         s_res = self.search_engine.search(
-            SearchQuery(query=question, top_k=chat_query.top_k, use_reranker=True)
+            SearchQuery(
+                query=question,
+                top_k=chat_query.top_k,
+                use_reranker=True,
+                filters=chat_query.filters,
+            )
         )
         retrieved_chunks = s_res.results
 
@@ -67,20 +90,30 @@ class CustomRAGChain:
 
         # 5. GHI VÀO REDIS CACHE
         self.cache_manager.set_cached_response(
-            question, response.model_dump(), config_prefix=str(chat_query.top_k)
+            question, response.model_dump(), config_prefix=config_prefix
         )
 
         return response
 
-    async def stream_response(self, question: str, top_k: int = 5) -> AsyncIterator[str]:
+    async def stream_response(
+        self, question: str, top_k: int = 5
+    ) -> AsyncIterator[str]:
         """
         Phát luồng Server-Sent Events (SSE):
           - event: citation
           - event: token
           - event: done
         """
-        from src.models import SearchQuery
-        s_res = self.search_engine.search(SearchQuery(query=question, top_k=top_k, use_reranker=True))
+        is_safe, safety_msg = AntiHallucinationGuard.validate_query(question)
+        if not is_safe:
+            yield f"event: citation\ndata: {json.dumps({'citations': [], 'total_chunks': 0})}\n\n"
+            yield f"event: token\ndata: {json.dumps({'token': safety_msg}, ensure_ascii=False)}\n\n"
+            yield 'event: done\ndata: {"status": "blocked"}\n\n'
+            return
+
+        s_res = self.search_engine.search(
+            SearchQuery(query=question, top_k=top_k, use_reranker=True)
+        )
         retrieved_chunks = s_res.results
 
         sys_prompt, user_prompt, citations = AntiHallucinationGuard.assemble_prompt(
@@ -88,27 +121,27 @@ class CustomRAGChain:
             retrieved_chunks=retrieved_chunks,
         )
 
-        # Phát citation trước
         citation_payload = {
             "citations": [c.model_dump() for c in citations],
             "total_chunks": len(retrieved_chunks),
         }
         yield f"event: citation\ndata: {json.dumps(citation_payload, ensure_ascii=False)}\n\n"
 
-        # Stream tokens
         async for token in self._stream_llm(sys_prompt, user_prompt, retrieved_chunks):
             token_payload = {"token": token}
             yield f"event: token\ndata: {json.dumps(token_payload, ensure_ascii=False)}\n\n"
 
-        yield "event: done\ndata: {\"status\": \"completed\"}\n\n"
+        yield 'event: done\ndata: {"status": "completed"}\n\n'
 
-    async def _call_llm(self, sys_prompt: str, user_prompt: str, context_chunks: List[Chunk]) -> str:
+    async def _call_llm(
+        self, sys_prompt: str, user_prompt: str, context_chunks: List[Chunk]
+    ) -> str:
         provider = self.settings.llm_provider.lower()
 
-        # vLLM / Ollama OpenAI-compatible endpoint
         if provider in ["ollama", "vllm", "openai"]:
             try:
                 import httpx
+
                 headers = {"Content-Type": "application/json"}
                 if self.settings.openai_api_key:
                     headers["Authorization"] = f"Bearer {self.settings.openai_api_key}"
@@ -131,17 +164,20 @@ class CustomRAGChain:
             except Exception as e:
                 logger.warning(f"Lỗi gọi {provider} ({e}). Dùng Mock Generation.")
 
-        # Fallback Mock Generator có kiểm soát ngữ cảnh
         return self._generate_grounded_mock(user_prompt, context_chunks)
 
-    async def _stream_llm(self, sys_prompt: str, user_prompt: str, context_chunks: List[Chunk]) -> AsyncIterator[str]:
+    async def _stream_llm(
+        self, sys_prompt: str, user_prompt: str, context_chunks: List[Chunk]
+    ) -> AsyncIterator[str]:
         full_text = await self._call_llm(sys_prompt, user_prompt, context_chunks)
         words = full_text.split(" ")
         for w in words:
             yield w + " "
             await asyncio.sleep(0.015)
 
-    def _generate_grounded_mock(self, user_prompt: str, context_chunks: List[Chunk]) -> str:
+    def _generate_grounded_mock(
+        self, user_prompt: str, context_chunks: List[Chunk]
+    ) -> str:
         if not context_chunks:
             return "Không tìm thấy thông tin trong tài liệu."
 

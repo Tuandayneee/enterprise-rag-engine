@@ -1,6 +1,7 @@
 """
 Root entrypoint proxy to src.main:app
 """
+
 import sys
 from pathlib import Path
 
@@ -17,4 +18,6 @@ if __name__ == "__main__":
     from src.core.config import get_settings
 
     settings = get_settings()
-    uvicorn.run("src.main:app", host=settings.app_host, port=settings.app_port, reload=True)
+    uvicorn.run(
+        "src.main:app", host=settings.app_host, port=settings.app_port, reload=True
+    )

@@ -34,12 +34,16 @@ class OfflineIngestionPipeline:
         self.embeddings = EmbeddingPipeline()
         self.chunker = SemanticChunker(embedding_pipeline=self.embeddings)
 
-    def ingest_file(self, file_path: str, document_id: Optional[str] = None) -> IngestionResponse:
+    def ingest_file(
+        self, file_path: str, document_id: Optional[str] = None
+    ) -> IngestionResponse:
         doc_id = document_id or f"doc_{uuid.uuid4().hex[:8]}"
         print(f"📥 Đang bóc tách file: {file_path}")
 
         text, meta = DocumentExtractor.extract_from_file(file_path)
-        chunks: List[Chunk] = self.chunker.chunk(text, document_id=doc_id, metadata=meta)
+        chunks: List[Chunk] = self.chunker.chunk(
+            text, document_id=doc_id, metadata=meta
+        )
 
         if not chunks:
             return IngestionResponse(
@@ -52,7 +56,9 @@ class OfflineIngestionPipeline:
 
         # Nạp vào PostgreSQL (pgvector + tsvector)
         self.storage.upsert_chunks(chunks)
-        print(f"✅ Đã nạp thành công {len(chunks)} chunks của tài liệu '{doc_id}' vào Postgres/Vector Storage.")
+        print(
+            f"✅ Đã nạp thành công {len(chunks)} chunks của tài liệu '{doc_id}' vào Postgres/Vector Storage."
+        )
 
         return IngestionResponse(
             success=True,
@@ -62,10 +68,17 @@ class OfflineIngestionPipeline:
             message=f"Đã xử lý và nạp thành công {len(chunks)} chunks.",
         )
 
-    def ingest_raw_text(self, text: str, document_id: Optional[str] = None, source_name: str = "raw_text") -> IngestionResponse:
+    def ingest_raw_text(
+        self,
+        text: str,
+        document_id: Optional[str] = None,
+        source_name: str = "raw_text",
+    ) -> IngestionResponse:
         doc_id = document_id or f"doc_{uuid.uuid4().hex[:8]}"
         meta = {"source": source_name, "type": "text"}
-        chunks: List[Chunk] = self.chunker.chunk(text, document_id=doc_id, metadata=meta)
+        chunks: List[Chunk] = self.chunker.chunk(
+            text, document_id=doc_id, metadata=meta
+        )
         self.storage.upsert_chunks(chunks)
         return IngestionResponse(
             success=True,
@@ -107,7 +120,9 @@ def main():
 
     for doc_id, text, src in sample_documents:
         res = pipeline.ingest_raw_text(text=text, document_id=doc_id, source_name=src)
-        print(f"  -> Ingested: {doc_id} | Chunks: {res.total_chunks} | Status: {res.message}")
+        print(
+            f"  -> Ingested: {doc_id} | Chunks: {res.total_chunks} | Status: {res.message}"
+        )
 
     print("=" * 70)
     print("✨ Quá trình Ingestion hoàn tất!")

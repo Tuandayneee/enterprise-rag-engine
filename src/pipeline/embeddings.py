@@ -16,7 +16,9 @@ class EmbeddingPipeline:
     3. Deterministic Hashing Embedding (Fallback offline, bảo đảm 100% test chạy được)
     """
 
-    def __init__(self, model_name: Optional[str] = None, dimension: Optional[int] = None):
+    def __init__(
+        self, model_name: Optional[str] = None, dimension: Optional[int] = None
+    ):
         settings = get_settings()
         self.model_name = model_name or settings.embedding_model_name
         self.dimension = dimension or settings.embedding_dimension
@@ -27,8 +29,13 @@ class EmbeddingPipeline:
         if self._initialized:
             return
         self._initialized = True
+        settings = get_settings()
+        if not settings.use_neural_models:
+            self._model = None
+            return
         try:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer(self.model_name)
             logger.info(f"Đã nạp mô hình Embedding: {self.model_name}")
         except Exception:
@@ -59,8 +66,11 @@ class EmbeddingPipeline:
         if settings.llm_provider == "openai" and settings.openai_api_key:
             try:
                 from openai import OpenAI
+
                 client = OpenAI(api_key=settings.openai_api_key)
-                resp = client.embeddings.create(input=texts, model="text-embedding-3-small")
+                resp = client.embeddings.create(
+                    input=texts, model="text-embedding-3-small"
+                )
                 return [d.embedding for d in resp.data]
             except Exception:
                 pass
@@ -77,7 +87,10 @@ class EmbeddingPipeline:
 
         for word in words:
             h1 = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16) % self.dimension
-            h2 = int(hashlib.sha256(word.encode("utf-8")).hexdigest(), 16) % self.dimension
+            h2 = (
+                int(hashlib.sha256(word.encode("utf-8")).hexdigest(), 16)
+                % self.dimension
+            )
             sign = 1.0 if (h1 % 2 == 0) else -1.0
             vec[h1] += sign * (1.0 + math.log(1 + len(word)))
             vec[h2] += 0.5 * sign

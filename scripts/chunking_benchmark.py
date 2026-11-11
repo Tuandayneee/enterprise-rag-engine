@@ -34,7 +34,9 @@ def main():
         "Nhờ đó, mỗi đoạn văn bản lưu vào Vector DB đều giữ trọn vẹn một ý niệm hoàn chỉnh, loại bỏ hiện tượng câu què cụt ngữ cảnh."
     )
 
-    results = ChunkingBenchmark.run_benchmark(sample_corpus, document_id="benchmark_doc_01")
+    results = ChunkingBenchmark.run_benchmark(
+        sample_corpus, document_id="benchmark_doc_01"
+    )
 
     header = f"{'Chiến Lược Chunking':<26} | {'Chunks':<6} | {'Avg Len':<8} | {'Std Len':<8} | {'Completeness':<12} | {'Latency (ms)':<12}"
     print(header)
@@ -52,9 +54,13 @@ def main():
 
     print("=" * 75)
     print("💡 KẾT LUẬN TUẦN 1:")
-    print("  - Fixed-size có độ trễ thấp nhất nhưng dễ cắt ngang câu (Completeness thấp).")
+    print(
+        "  - Fixed-size có độ trễ thấp nhất nhưng dễ cắt ngang câu (Completeness thấp)."
+    )
     print("  - Recursive Chunking giữ được cấu trúc văn bản cơ bản.")
-    print("  - Semantic Chunking đạt điểm Context Completeness cao nhất (100%), bảo toàn trọn vẹn ngữ nghĩa cho RAG.")
+    print(
+        "  - Semantic Chunking đạt điểm Context Completeness cao nhất (100%), bảo toàn trọn vẹn ngữ nghĩa cho RAG."
+    )
     print("=" * 75)
 
 

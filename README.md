@@ -191,11 +191,14 @@ docker compose -f deployments/docker-compose.yml ps
 
 | Method | Endpoint | Mô Tả |
 | :--- | :--- | :--- |
-| `POST` | `/api/v1/ingest` | **Offline Pipeline**: Bóc tách, Semantic Chunking và nạp vào pgvector |
-| `POST` | `/api/v1/search` | **Online Pipeline**: Hybrid Search (Dense + BM25) + RRF + Cross-Encoder |
-| `POST` | `/api/v1/chat` | **Online Pipeline**: Hỏi đáp RAG có Redis Cache, Guardrails và trích dẫn |
-| `GET` | `/api/v1/chat/stream` | **Online Pipeline**: Stream Server-Sent Events (SSE) theo thời gian thực |
-| `GET` | `/api/v1/health` | Kiểm tra sức khỏe toàn diện hệ thống |
+| `POST` | `/api/v1/ingest` | **Offline Pipeline**: Nạp văn bản thuần, chọn chiến lược Chunking (`fixed_size`, `recursive`, `semantic`) & lưu DB |
+| `POST` | `/api/v1/ingest/file` | **Offline Pipeline**: Upload file (`.pdf`, `.md`, `.txt`, `.log`), tự động bóc tách, Chunking & đánh chỉ mục |
+| `DELETE` | `/api/v1/documents/{document_id}` | Xóa toàn bộ chunks của tài liệu theo `document_id` và tự động làm mới Redis Cache |
+| `POST` | `/api/v1/search` | **Online Pipeline**: Hybrid Search (Dense + BM25) + RRF + Cross-Encoder Reranker + Metadata Filter |
+| `POST` | `/api/v1/chat` | **Online Pipeline**: Hỏi đáp RAG có Redis Cache-Aside, Prompt Injection Guard, Anti-Hallucination & trích dẫn |
+| `GET` | `/api/v1/chat/stream` | **Online Pipeline**: Stream Server-Sent Events (SSE) theo thời gian thực (`citation`, `token`, `done`) |
+| `POST` | `/api/v1/evaluate` | **Evaluation Suite**: Chạy tự động Chunking Benchmark & RAGAS Evaluation trả về JSON |
+| `GET` | `/api/v1/health` | Kiểm tra sức khỏe toàn diện hệ thống, loại storage backend và tổng số chunks đã đánh chỉ mục |
 
 ---
 

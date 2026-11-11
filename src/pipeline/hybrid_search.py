@@ -34,33 +34,47 @@ class HybridSearchEngine:
         t0 = time.perf_counter()
         query = query_request.query.strip()
         top_k = query_request.top_k
-        candidate_pool = query_request.candidate_pool or self.settings.rerank_candidate_pool
+        candidate_pool = (
+            query_request.candidate_pool or self.settings.rerank_candidate_pool
+        )
         use_reranker = query_request.use_reranker
+        filters = query_request.filters
 
         # 1. DENSE RETRIEVAL (Vector Cosine Similarity qua pgvector HNSW)
-        query_vec = self.embeddings.embed_query(query)
-        dense_results = self.storage.dense_search(query_vector=query_vec, top_k=candidate_pool)
+        dense_results = []
+        if query_request.dense_weight > 0:
+            query_vec = self.embeddings.embed_query(query)
+            dense_results = self.storage.dense_search(
+                query_vector=query_vec, top_k=candidate_pool, filters=filters
+            )
 
         # 2. SPARSE RETRIEVAL (BM25 / tsvector qua Postgres Full-text Search)
-        sparse_results = self.storage.sparse_search(query=query, top_k=candidate_pool)
+        sparse_results = []
+        if query_request.sparse_weight > 0:
+            sparse_results = self.storage.sparse_search(
+                query=query, top_k=candidate_pool, filters=filters
+            )
 
         # 3. RECIPROCAL RANK FUSION (RRF)
         fused_candidates = self._reciprocal_rank_fusion(
             dense_results=dense_results,
             sparse_results=sparse_results,
             k=self.settings.rrf_k,
+            dense_weight=query_request.dense_weight,
+            sparse_weight=query_request.sparse_weight,
         )
 
         # 4. CROSS-ENCODER RERANKER (Top-20 -> Top-5)
         if use_reranker and fused_candidates:
-            raw_top_candidates = [item["chunk"] for item in fused_candidates[:candidate_pool]]
+            raw_top_candidates = [
+                item["chunk"] for item in fused_candidates[:candidate_pool]
+            ]
             reranked_tuples = self.reranker.rerank(
                 query=query,
                 candidates=raw_top_candidates,
                 top_k=top_k,
             )
 
-            # Gán điểm chi tiết vào model Chunk
             final_chunks: List[Chunk] = []
             lookup = {item["chunk"].id: item for item in fused_candidates}
 
@@ -96,13 +110,14 @@ class HybridSearchEngine:
         dense_results: List[Any],
         sparse_results: List[Any],
         k: int = 60,
+        dense_weight: float = 1.0,
+        sparse_weight: float = 1.0,
     ) -> List[Dict[str, Any]]:
         """
-        RRF Score(d) = sum_{m in M} 1 / (k + rank_m(d))
+        RRF Score(d) = sum_{m in M} w_m / (k + rank_m(d))
         """
         rrf_table: Dict[str, Dict[str, Any]] = {}
 
-        # Xử lý Dense ranking
         for rank, (chunk, score) in enumerate(dense_results, start=1):
             if chunk.id not in rrf_table:
                 rrf_table[chunk.id] = {
@@ -111,9 +126,8 @@ class HybridSearchEngine:
                     "dense_score": float(score),
                     "bm25_score": None,
                 }
-            rrf_table[chunk.id]["rrf_score"] += 1.0 / (k + rank)
+            rrf_table[chunk.id]["rrf_score"] += dense_weight / (k + rank)
 
-        # Xử lý Sparse ranking
         for rank, (chunk, score) in enumerate(sparse_results, start=1):
             if chunk.id not in rrf_table:
                 rrf_table[chunk.id] = {
@@ -124,7 +138,9 @@ class HybridSearchEngine:
                 }
             else:
                 rrf_table[chunk.id]["bm25_score"] = float(score)
-            rrf_table[chunk.id]["rrf_score"] += 1.0 / (k + rank)
+            rrf_table[chunk.id]["rrf_score"] += sparse_weight / (k + rank)
 
-        sorted_results = sorted(rrf_table.values(), key=lambda x: x["rrf_score"], reverse=True)
+        sorted_results = sorted(
+            rrf_table.values(), key=lambda x: x["rrf_score"], reverse=True
+        )
         return sorted_results

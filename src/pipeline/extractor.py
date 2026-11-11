@@ -59,6 +59,7 @@ class DocumentExtractor:
         # Ưu tiên pypdf
         try:
             from pypdf import PdfReader
+
             reader = PdfReader(str(path))
             pages = []
             for idx, page in enumerate(reader.pages):
@@ -70,7 +71,10 @@ class DocumentExtractor:
                 "total_pages": len(reader.pages),
             }
         except ImportError:
-            return f"[Nội dung thô của PDF {path.name}]", {"type": "pdf", "total_pages": 1}
+            return f"[Nội dung thô của PDF {path.name}]", {
+                "type": "pdf",
+                "total_pages": 1,
+            }
 
     @staticmethod
     def _extract_log_file(path: Path) -> Tuple[str, Dict[str, Any]]:

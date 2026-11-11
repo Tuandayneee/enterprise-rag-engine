@@ -1,7 +1,6 @@
 from src.models import Chunk, SearchQuery
 from src.db.connection import InMemoryDualStore
 from src.pipeline.hybrid_search import HybridSearchEngine
-from src.pipeline.reranker import CrossEncoderReranker
 
 
 def test_dual_storage_dense_and_sparse():
@@ -11,12 +10,14 @@ def test_dual_storage_dense_and_sparse():
         id="c1",
         document_id="d1",
         text="Cơ sở dữ liệu PostgreSQL sử dụng extension pgvector với index HNSW.",
+        metadata={"department": "infra"},
         embedding=[0.1] * 1024,
     )
     chunk2 = Chunk(
         id="c2",
         document_id="d2",
         text="Full-Text Search trong Postgres dùng cột tsvector và index GIN để tìm kiếm từ khóa BM25.",
+        metadata={"department": "search"},
         embedding=[0.9] * 1024,
     )
 
@@ -32,6 +33,13 @@ def test_dual_storage_dense_and_sparse():
     sparse_hits = storage.sparse_search("HNSW extension", top_k=1)
     assert len(sparse_hits) == 1
     assert sparse_hits[0][0].id == "c1"
+
+    # Test Metadata filtering
+    filtered_hits = storage.dense_search(
+        [0.9] * 1024, top_k=2, filters={"department": "infra"}
+    )
+    assert len(filtered_hits) == 1
+    assert filtered_hits[0][0].id == "c1"
 
 
 def test_hybrid_search_with_rrf_and_reranker():
@@ -58,7 +66,6 @@ def test_hybrid_search_with_rrf_and_reranker():
 
     assert resp.total_candidates > 0
     assert len(resp.results) > 0
-    # Top chunk should be chunk_a because query matches perfectly
     assert resp.results[0].id == "chunk_a"
     assert resp.results[0].rrf_score is not None
     assert resp.results[0].final_score > 0

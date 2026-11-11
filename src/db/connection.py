@@ -1,6 +1,8 @@
 import json
 import logging
+import math
 import re
+from collections import Counter
 from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
 from src.core.config import get_settings
@@ -13,10 +15,20 @@ class BaseStorage:
     def upsert_chunks(self, chunks: List[Chunk]) -> bool:
         raise NotImplementedError
 
-    def dense_search(self, query_vector: List[float], top_k: int = 20) -> List[Tuple[Chunk, float]]:
+    def dense_search(
+        self,
+        query_vector: List[float],
+        top_k: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[Chunk, float]]:
         raise NotImplementedError
 
-    def sparse_search(self, query: str, top_k: int = 20) -> List[Tuple[Chunk, float]]:
+    def sparse_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[Chunk, float]]:
         raise NotImplementedError
 
     def delete_by_document(self, document_id: str) -> bool:
@@ -25,10 +37,13 @@ class BaseStorage:
     def count(self) -> int:
         raise NotImplementedError
 
+    def get_backend_name(self) -> str:
+        return "base_storage"
+
 
 class InMemoryDualStore(BaseStorage):
     """
-    Bộ lưu trữ kép In-Memory dự phòng (Dense Cosine + Okapi BM25).
+    Bộ lưu trữ kép In-Memory dự phòng (Dense Cosine + Okapi BM25 với IDF đầy đủ).
     Đảm bảo kiểm thử và phát triển cục bộ trơn tru khi chưa bật Postgres.
     """
 
@@ -37,12 +52,29 @@ class InMemoryDualStore(BaseStorage):
         self.b = b
         self.chunks: Dict[str, Chunk] = {}
 
+    def get_backend_name(self) -> str:
+        return "in_memory_dual_store"
+
+    @staticmethod
+    def _matches_filters(chunk: Chunk, filters: Optional[Dict[str, Any]]) -> bool:
+        if not filters:
+            return True
+        for k, v in filters.items():
+            if chunk.metadata.get(k) != v and getattr(chunk, k, None) != v:
+                return False
+        return True
+
     def upsert_chunks(self, chunks: List[Chunk]) -> bool:
         for c in chunks:
             self.chunks[c.id] = c
         return True
 
-    def dense_search(self, query_vector: List[float], top_k: int = 20) -> List[Tuple[Chunk, float]]:
+    def dense_search(
+        self,
+        query_vector: List[float],
+        top_k: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[Chunk, float]]:
         if not self.chunks:
             return []
 
@@ -53,7 +85,7 @@ class InMemoryDualStore(BaseStorage):
 
         results = []
         for ch in self.chunks.values():
-            if not ch.embedding:
+            if not ch.embedding or not self._matches_filters(ch, filters):
                 continue
             c_vec = np.array(ch.embedding, dtype=np.float32)
             c_norm = np.linalg.norm(c_vec)
@@ -66,7 +98,12 @@ class InMemoryDualStore(BaseStorage):
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
-    def sparse_search(self, query: str, top_k: int = 20) -> List[Tuple[Chunk, float]]:
+    def sparse_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[Chunk, float]]:
         if not self.chunks:
             return []
 
@@ -74,29 +111,56 @@ class InMemoryDualStore(BaseStorage):
         if not q_tokens:
             return []
 
-        # Tính toán BM25 đơn giản hóa
-        doc_lengths = {cid: len(ch.text.split()) for cid, ch in self.chunks.items()}
-        avgdl = sum(doc_lengths.values()) / max(len(doc_lengths), 1)
+        filtered_chunks = {
+            cid: ch
+            for cid, ch in self.chunks.items()
+            if self._matches_filters(ch, filters)
+        }
+        corpus_size = len(filtered_chunks)
+        if corpus_size == 0:
+            return []
+
+        doc_tokens: Dict[str, Counter] = {}
+        doc_lengths: Dict[str, int] = {}
+        doc_freqs: Counter = Counter()
+
+        for cid, ch in filtered_chunks.items():
+            tokens = [t.lower() for t in re.findall(r"\w+", ch.text)]
+            doc_lengths[cid] = len(tokens)
+            tf_counter = Counter(tokens)
+            doc_tokens[cid] = tf_counter
+            for term in tf_counter.keys():
+                doc_freqs[term] += 1
+
+        avgdl = sum(doc_lengths.values()) / max(corpus_size, 1)
 
         scores = []
-        for cid, ch in self.chunks.items():
-            text_lower = ch.text.lower()
+        for cid, ch in filtered_chunks.items():
             d_len = doc_lengths[cid]
+            tf_map = doc_tokens[cid]
             score = 0.0
             for qt in q_tokens:
-                tf = text_lower.count(qt)
+                tf = tf_map.get(qt, 0)
                 if tf > 0:
-                    numerator = tf * (self.k1 + 1)
-                    denominator = tf + self.k1 * (1 - self.b + self.b * (d_len / (avgdl or 1.0)))
-                    score += numerator / (denominator or 1.0)
+                    df = doc_freqs.get(qt, 0)
+                    idf = math.log(
+                        1.0 + max((corpus_size - df + 0.5) / (df + 0.5), 0.001)
+                    )
+                    numerator = tf * (self.k1 + 1.0)
+                    denominator = tf + self.k1 * (
+                        1.0 - self.b + self.b * (d_len / (avgdl or 1.0))
+                    )
+                    score += idf * (numerator / (denominator or 1.0))
             if score > 0:
-                scores.append((ch, score))
+                scores.append((ch, float(score)))
 
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:top_k]
 
     def delete_by_document(self, document_id: str) -> bool:
-        to_del = [cid for cid, ch in self.chunks.items() if ch.document_id == document_id]
+        to_del = [
+            cid for cid, ch in self.chunks.items() if ch.document_id == document_id
+        ]
         for cid in to_del:
             del self.chunks[cid]
         return True
@@ -116,9 +180,13 @@ class PostgresVectorStorage(BaseStorage):
         self._conn = None
         self._init_db()
 
+    def get_backend_name(self) -> str:
+        return "postgresql_pgvector"
+
     def _is_port_open(self, host: str, port: int, timeout: float = 0.05) -> bool:
         try:
             import socket
+
             target_host = "127.0.0.1" if host in ["localhost", "127.0.0.1"] else host
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(timeout)
@@ -127,7 +195,9 @@ class PostgresVectorStorage(BaseStorage):
             return False
 
     def _init_db(self):
-        if not self._is_port_open(self.settings.postgres_host, self.settings.postgres_port):
+        if not self._is_port_open(
+            self.settings.postgres_host, self.settings.postgres_port
+        ):
             logger.info("PostgreSQL offline. Kích hoạt InMemoryDualStore dự phòng.")
             self._connected = False
             return
@@ -147,7 +217,6 @@ class PostgresVectorStorage(BaseStorage):
             self._conn.autocommit = True
             register_vector(self._conn)
 
-            # Khởi tạo bảng và extension
             with self._conn.cursor() as cur:
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
@@ -176,6 +245,7 @@ class PostgresVectorStorage(BaseStorage):
         if not self._connected or not self._conn:
             return False
         import psycopg2.extras
+
         with self._conn.cursor() as cur:
             query = """
                 INSERT INTO document_chunks (id, document_id, strategy, content, metadata, embedding)
@@ -189,7 +259,11 @@ class PostgresVectorStorage(BaseStorage):
                 (
                     c.id,
                     c.document_id,
-                    c.strategy.value if hasattr(c.strategy, "value") else str(c.strategy),
+                    (
+                        c.strategy.value
+                        if hasattr(c.strategy, "value")
+                        else str(c.strategy)
+                    ),
                     c.text,
                     json.dumps(c.metadata),
                     c.embedding,
@@ -199,19 +273,39 @@ class PostgresVectorStorage(BaseStorage):
             psycopg2.extras.execute_values(cur, query, data)
         return True
 
-    def dense_search(self, query_vector: List[float], top_k: int = 20) -> List[Tuple[Chunk, float]]:
+    def dense_search(
+        self,
+        query_vector: List[float],
+        top_k: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[Chunk, float]]:
         if not self._connected or not self._conn:
             return []
         with self._conn.cursor() as cur:
-            # 1 - (embedding <=> query_vector) quy đổi khoảng cách Cosine sang điểm tương đồng Cosine
-            cur.execute("""
-                SELECT id, document_id, strategy, content, metadata,
-                       1 - (embedding <=> %s::vector) AS similarity
-                FROM document_chunks
-                WHERE embedding IS NOT NULL
-                ORDER BY embedding <=> %s::vector ASC
-                LIMIT %s;
-            """, (query_vector, query_vector, top_k))
+            if filters:
+                cur.execute(
+                    """
+                    SELECT id, document_id, strategy, content, metadata,
+                           1 - (embedding <=> %s::vector) AS similarity
+                    FROM document_chunks
+                    WHERE embedding IS NOT NULL AND metadata @> %s::jsonb
+                    ORDER BY embedding <=> %s::vector ASC
+                    LIMIT %s;
+                """,
+                    (query_vector, json.dumps(filters), query_vector, top_k),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, document_id, strategy, content, metadata,
+                           1 - (embedding <=> %s::vector) AS similarity
+                    FROM document_chunks
+                    WHERE embedding IS NOT NULL
+                    ORDER BY embedding <=> %s::vector ASC
+                    LIMIT %s;
+                """,
+                    (query_vector, query_vector, top_k),
+                )
             rows = cur.fetchall()
 
         results = []
@@ -219,26 +313,51 @@ class PostgresVectorStorage(BaseStorage):
             ch = Chunk(
                 id=r[0],
                 document_id=r[1],
-                strategy=ChunkStrategy(r[2]) if r[2] in [e.value for e in ChunkStrategy] else ChunkStrategy.SEMANTIC,
+                strategy=(
+                    ChunkStrategy(r[2])
+                    if r[2] in [e.value for e in ChunkStrategy]
+                    else ChunkStrategy.SEMANTIC
+                ),
                 text=r[3],
                 metadata=r[4] if isinstance(r[4], dict) else json.loads(r[4]),
             )
             results.append((ch, float(r[5])))
         return results
 
-    def sparse_search(self, query: str, top_k: int = 20) -> List[Tuple[Chunk, float]]:
+    def sparse_search(
+        self,
+        query: str,
+        top_k: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[Chunk, float]]:
         if not self._connected or not self._conn:
             return []
         with self._conn.cursor() as cur:
-            # Sử dụng ts_rank_cd kết hợp plainto_tsquery cho Full-Text Search
-            cur.execute("""
-                SELECT id, document_id, strategy, content, metadata,
-                       ts_rank_cd(tsv_content, plainto_tsquery('english', %s)) AS rank
-                FROM document_chunks
-                WHERE tsv_content @@ plainto_tsquery('english', %s)
-                ORDER BY rank DESC
-                LIMIT %s;
-            """, (query, query, top_k))
+            if filters:
+                cur.execute(
+                    """
+                    SELECT id, document_id, strategy, content, metadata,
+                           ts_rank_cd(tsv_content, plainto_tsquery('english', %s)) AS rank
+                    FROM document_chunks
+                    WHERE tsv_content @@ plainto_tsquery('english', %s)
+                      AND metadata @> %s::jsonb
+                    ORDER BY rank DESC
+                    LIMIT %s;
+                """,
+                    (query, query, json.dumps(filters), top_k),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, document_id, strategy, content, metadata,
+                           ts_rank_cd(tsv_content, plainto_tsquery('english', %s)) AS rank
+                    FROM document_chunks
+                    WHERE tsv_content @@ plainto_tsquery('english', %s)
+                    ORDER BY rank DESC
+                    LIMIT %s;
+                """,
+                    (query, query, top_k),
+                )
             rows = cur.fetchall()
 
         results = []
@@ -246,7 +365,11 @@ class PostgresVectorStorage(BaseStorage):
             ch = Chunk(
                 id=r[0],
                 document_id=r[1],
-                strategy=ChunkStrategy(r[2]) if r[2] in [e.value for e in ChunkStrategy] else ChunkStrategy.SEMANTIC,
+                strategy=(
+                    ChunkStrategy(r[2])
+                    if r[2] in [e.value for e in ChunkStrategy]
+                    else ChunkStrategy.SEMANTIC
+                ),
                 text=r[3],
                 metadata=r[4] if isinstance(r[4], dict) else json.loads(r[4]),
             )
@@ -257,7 +380,10 @@ class PostgresVectorStorage(BaseStorage):
         if not self._connected or not self._conn:
             return False
         with self._conn.cursor() as cur:
-            cur.execute("DELETE FROM document_chunks WHERE document_id = %s;", (document_id,))
+            cur.execute(
+                "DELETE FROM document_chunks WHERE document_id = %s;",
+                (document_id,),
+            )
         return True
 
     def count(self) -> int:

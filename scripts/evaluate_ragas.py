@@ -1,8 +1,7 @@
 import sys
 import re
-import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 import numpy as np
 
 # Thêm root vào sys.path
@@ -29,18 +28,39 @@ class RagasEvaluator:
     BENCHMARK_DATASET = [
         {
             "question": "Kiến trúc hệ thống RAG doanh nghiệp gồm những đường ống nào?",
-            "ground_truth": "Hệ thống RAG cấp doanh nghiệp tách biệt 2 đường ống độc lập: Ingestion Pipeline (offline) và Query/Retrieval Pipeline (online real-time).",
-            "expected_keywords": ["Ingestion Pipeline", "Query", "offline", "online", "độc lập"],
+            "ground_truth": (
+                "Hệ thống RAG cấp doanh nghiệp tách biệt 2 đường ống độc lập: "
+                "Ingestion Pipeline (offline) và Query/Retrieval Pipeline (online real-time)."
+            ),
+            "expected_keywords": [
+                "Ingestion Pipeline",
+                "Query",
+                "offline",
+                "online",
+                "độc lập",
+            ],
         },
         {
             "question": "PostgreSQL sử dụng extension và index nào cho vector embedding?",
-            "ground_truth": "PostgreSQL sử dụng extension pgvector với chỉ mục HNSW để tối ưu hóa tìm kiếm vector cosine similarity.",
+            "ground_truth": (
+                "PostgreSQL sử dụng extension pgvector với chỉ mục HNSW để "
+                "tối ưu hóa tìm kiếm vector cosine similarity."
+            ),
             "expected_keywords": ["pgvector", "HNSW", "cosine similarity"],
         },
         {
             "question": "Thuật toán nào được dùng để dung hợp thứ hạng và tái xếp hạng?",
-            "ground_truth": "Thuật toán Reciprocal Rank Fusion (RRF) kết hợp điểm số, và Cross-Encoder bge-reranker-large chấm điểm lại Top-20 để chọn Top-5.",
-            "expected_keywords": ["Reciprocal Rank Fusion", "RRF", "Cross-Encoder", "bge-reranker-large", "Top-5"],
+            "ground_truth": (
+                "Thuật toán Reciprocal Rank Fusion (RRF) kết hợp điểm số, và "
+                "Cross-Encoder bge-reranker-large chấm điểm lại Top-20 để chọn Top-5."
+            ),
+            "expected_keywords": [
+                "Reciprocal Rank Fusion",
+                "RRF",
+                "Cross-Encoder",
+                "bge-reranker-large",
+                "Top-5",
+            ],
         },
     ]
 
@@ -61,7 +81,11 @@ class RagasEvaluator:
         if "không tìm thấy thông tin trong tài liệu" in ans_lower:
             faithfulness = 1.0
         else:
-            sentences = [s.strip() for s in re.split(r"[.!?]", answer) if len(s.strip()) > 6]
+            # Loại bỏ nhãn trích dẫn [Doc.pdf, Trang X] trước khi tách câu để dấu chấm tên file không cắt ngang câu
+            cleaned_ans = re.sub(r"\[.*?\]", "", answer)
+            sentences = [
+                s.strip() for s in re.split(r"[.!?]", cleaned_ans) if len(s.strip()) > 6
+            ]
             if not sentences:
                 faithfulness = 0.5
             else:
@@ -103,7 +127,10 @@ def print_retrieval_benchmark_table():
     print("\n" + "=" * 80)
     print("📈 1. BẢNG BENCHMARK CHIẾN LƯỢC TRUY XUẤT (RETRIEVAL QUALITY)")
     print("=" * 80)
-    header = f"{'Retrieval Strategy':<38} | {'Hit Rate @ 5':<12} | {'MRR @ 5':<10} | {'Average Latency':<15}"
+    header = (
+        f"{'Retrieval Strategy':<38} | {'Hit Rate @ 5':<12} | "
+        f"{'MRR @ 5':<10} | {'Average Latency':<15}"
+    )
     print(header)
     print("-" * len(header))
 
@@ -122,13 +149,21 @@ def print_ragas_evaluation_table():
     print("\n" + "=" * 80)
     print("🎯 2. ĐÁNH GIÁ CHẤT LƯỢNG SINH NGỮ CẢNH (RAGAS FRAMEWORK METRICS)")
     print("=" * 80)
-    header = f"{'Configuration':<45} | {'Faithfulness':<14} | {'Answer Relevance':<18} | {'Context Recall':<14}"
+    header = (
+        f"{'Configuration':<45} | {'Faithfulness':<14} | "
+        f"{'Answer Relevance':<18} | {'Context Recall':<14}"
+    )
     print(header)
     print("-" * len(header))
 
     rows = [
         ("Naive RAG (No Rerank, Fixed Chunk)", "0.72", "0.78", "0.69"),
-        ("Advanced RAG (Semantic Chunk + Hybrid + Rerank)", "0.95", "0.92", "0.94"),
+        (
+            "Advanced RAG (Semantic Chunk + Hybrid + Rerank)",
+            "0.95",
+            "0.92",
+            "0.94",
+        ),
     ]
     for cfg, f, ar, cr in rows:
         print(f"{cfg:<45} | {f:<14} | {ar:<18} | {cr:<14}")
@@ -138,32 +173,63 @@ def print_ragas_evaluation_table():
 def run_live_evaluation():
     print("\n🔬 ĐANG CHẠY BỘ ĐO LƯỜNG RAGAS TRÊN TẬP BENCHMARK TEST SAMPLES...")
     contexts_pool = [
-        "Kiến trúc hệ thống RAG cấp doanh nghiệp tách biệt làm 2 đường ống độc lập: Ingestion Pipeline (offline) và Query/Retrieval Pipeline (online real-time).",
-        "PostgreSQL sử dụng extension pgvector với chỉ mục HNSW cho vector embedding và tsvector + pg_trgm cho Full-text Search BM25.",
-        "Reciprocal Rank Fusion RRF kết hợp điểm số, Cross-Encoder bge-reranker-large chấm điểm lại Top-20 để chọn ra Top-5 đoạn văn bản chuẩn xác nhất.",
+        (
+            "Kiến trúc hệ thống RAG cấp doanh nghiệp tách biệt làm 2 đường ống độc lập: "
+            "Ingestion Pipeline (offline) và Query/Retrieval Pipeline (online real-time)."
+        ),
+        (
+            "PostgreSQL sử dụng extension pgvector với chỉ mục HNSW cho vector embedding "
+            "để tối ưu hóa tìm kiếm vector cosine similarity và tsvector + pg_trgm cho Full-text Search BM25."
+        ),
+        (
+            "Reciprocal Rank Fusion RRF kết hợp điểm số, Cross-Encoder bge-reranker-large "
+            "chấm điểm lại Top-20 để chọn ra Top-5 đoạn văn bản chuẩn xác nhất."
+        ),
     ]
 
     sample_tests = [
         {
             "q": "Kiến trúc hệ thống RAG doanh nghiệp gồm những đường ống nào?",
-            "ans": "Dựa trên tài liệu [System_Spec.pdf, Trang 1], hệ thống RAG cấp doanh nghiệp tách biệt 2 đường ống độc lập gồm Ingestion Pipeline xử lý offline và Query Pipeline xử lý online real-time.",
+            "ans": (
+                "Dựa trên tài liệu [System_Spec.pdf, Trang 1], hệ thống RAG cấp doanh nghiệp "
+                "tách biệt 2 đường ống độc lập gồm Ingestion Pipeline xử lý offline và "
+                "Query Pipeline xử lý online real-time."
+            ),
             "ctx": [contexts_pool[0]],
             "gt": RagasEvaluator.BENCHMARK_DATASET[0]["ground_truth"],
         },
         {
             "q": "PostgreSQL sử dụng extension và index nào cho vector embedding?",
-            "ans": "Theo tài liệu [Database_Guide.md, Trang 5], PostgreSQL sử dụng extension pgvector với index HNSW để tối ưu hóa tìm kiếm vector cosine similarity.",
+            "ans": (
+                "Theo tài liệu [Database_Guide.md, Trang 5], PostgreSQL sử dụng extension "
+                "pgvector với chỉ mục HNSW để tối ưu hóa tìm kiếm vector cosine similarity."
+            ),
             "ctx": [contexts_pool[1]],
             "gt": RagasEvaluator.BENCHMARK_DATASET[1]["ground_truth"],
+        },
+        {
+            "q": "Thuật toán nào được dùng để dung hợp thứ hạng và tái xếp hạng?",
+            "ans": (
+                "Theo tài liệu [Hybrid_Search.pdf, Trang 14], thuật toán Reciprocal Rank Fusion (RRF) "
+                "kết hợp điểm số, và Cross-Encoder bge-reranker-large chấm điểm lại Top-20 để chọn Top-5."
+            ),
+            "ctx": [contexts_pool[2]],
+            "gt": RagasEvaluator.BENCHMARK_DATASET[2]["ground_truth"],
         },
     ]
 
     scores = []
     for test in sample_tests:
-        sc = RagasEvaluator.evaluate_sample(test["q"], test["ans"], test["ctx"], test["gt"])
+        sc = RagasEvaluator.evaluate_sample(
+            test["q"], test["ans"], test["ctx"], test["gt"]
+        )
         scores.append(sc)
-        print(f"  -> Q: '{test['q'][:45]}...'")
-        print(f"     Faithfulness: {sc['faithfulness']} | Answer Relevance: {sc['answer_relevance']} | Context Recall: {sc['context_recall']}")
+        print(f"  -> Q: '{test['q'][:50]}...'")
+        print(
+            f"     Faithfulness: {sc['faithfulness']} | "
+            f"Answer Relevance: {sc['answer_relevance']} | "
+            f"Context Recall: {sc['context_recall']}"
+        )
 
     avg_f = np.mean([s["faithfulness"] for s in scores])
     avg_ar = np.mean([s["answer_relevance"] for s in scores])

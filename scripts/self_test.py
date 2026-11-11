@@ -57,7 +57,11 @@ async def test_full_pipeline():
         content=sample_text,
         document_id="self_test_enterprise_doc",
         strategy=ChunkStrategy.SEMANTIC,
-        metadata={"source": "Enterprise_Whitepaper.pdf", "page": 1, "department": "AI-R&D"},
+        metadata={
+            "source": "Enterprise_Whitepaper.pdf",
+            "page": 1,
+            "department": "AI-R&D",
+        },
     )
     ingest_res = await ingest_document(ingest_req, _="127.0.0.1")
     print(f"   -> Success: {ingest_res.success}")
@@ -80,7 +84,9 @@ async def test_full_pipeline():
     print(f"   -> Execution Time: {s_res.execution_time_ms} ms")
     assert len(s_res.results) > 0, "Không tìm thấy kết quả tìm kiếm lai!"
     top_chunk = s_res.results[0]
-    print(f"   -> Top Chunk ID: {top_chunk.id} (Final Score: {top_chunk.final_score:.4f}, RRF: {top_chunk.rrf_score:.4f})")
+    print(
+        f"   -> Top Chunk ID: {top_chunk.id} (Final Score: {top_chunk.final_score:.4f}, RRF: {top_chunk.rrf_score:.4f})"
+    )
     assert top_chunk.final_score > 0, "Điểm xếp hạng không hợp lệ!"
     print("   ✅ Hybrid Search PASSED!")
 
@@ -95,7 +101,9 @@ async def test_full_pipeline():
     t0 = time.perf_counter()
     chat_res_1 = await chat_rag(chat_req, _="127.0.0.1")
     lat_1 = (time.perf_counter() - t0) * 1000.0
-    print(f"   [Lần 1 - Cache Miss] Latency: {lat_1:.2f} ms | Cached: {chat_res_1.cached}")
+    print(
+        f"   [Lần 1 - Cache Miss] Latency: {lat_1:.2f} ms | Cached: {chat_res_1.cached}"
+    )
     print(f"     -> Answer: {chat_res_1.answer[:90]}...")
     print(f"     -> Citations: {len(chat_res_1.citations)} nguồn trích dẫn")
     assert chat_res_1.cached is False, "Lần đầu tiên phải là Cache Miss!"
@@ -105,10 +113,14 @@ async def test_full_pipeline():
     t1 = time.perf_counter()
     chat_res_2 = await chat_rag(chat_req, _="127.0.0.1")
     lat_2 = (time.perf_counter() - t1) * 1000.0
-    print(f"   [Lần 2 - Cache Hit ] Latency: {lat_2:.2f} ms | Cached: {chat_res_2.cached}")
+    print(
+        f"   [Lần 2 - Cache Hit ] Latency: {lat_2:.2f} ms | Cached: {chat_res_2.cached}"
+    )
     assert chat_res_2.cached is True, "Lần thứ hai cùng câu hỏi phải là Cache Hit!"
     assert lat_2 < lat_1, "Cache Hit phải nhanh hơn Cache Miss!"
-    print(f"     -> Tốc độ phản hồi tăng tốc {lat_1 / max(lat_2, 0.01):.1f}x nhờ Redis Cache-Aside!")
+    print(
+        f"     -> Tốc độ phản hồi tăng tốc {lat_1 / max(lat_2, 0.01):.1f}x nhờ Redis Cache-Aside!"
+    )
     print("   ✅ Redis Cache-Aside PASSED!")
 
     # 5. TEST SSE STREAMING
@@ -151,9 +163,15 @@ async def test_full_pipeline():
         else:
             blocked_count += 1
 
-    print(f"   -> Đã gửi: 70 requests | Cho phép: {allowed_count} | Chặn (Throttled): {blocked_count}")
-    assert allowed_count == 60, f"Rate limiter cho phép {allowed_count} thay vì đúng 60!"
-    assert blocked_count == 10, f"Rate limiter phải chặn đúng 10 requests vượt ngưỡng!"
+    print(
+        f"   -> Đã gửi: 70 requests | Cho phép: {allowed_count} | Chặn (Throttled): {blocked_count}"
+    )
+    assert (
+        allowed_count == 60
+    ), f"Rate limiter cho phép {allowed_count} thay vì đúng 60!"
+    assert (
+        blocked_count == 10
+    ), f"Rate limiter chặn {blocked_count} thay vì đúng 10 requests vượt ngưỡng!"
     print("   ✅ Sliding Window Rate Limiter PASSED!")
 
     print("\n" + "=" * 75)

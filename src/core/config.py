@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 1024
 
     # Embedding & Cross-Encoder Models
+    use_neural_models: bool = False
     embedding_model_name: str = "BAAI/bge-m3"
     embedding_dimension: int = 1024
     reranker_model_name: str = "BAAI/bge-reranker-large"
@@ -50,9 +51,7 @@ class Settings(BaseSettings):
     rerank_candidate_pool: int = 20
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
     def get_postgres_dsn(self) -> str:

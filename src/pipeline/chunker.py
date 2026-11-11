@@ -13,11 +13,22 @@ class FixedSizeChunker:
     Cắt chuỗi ký tự theo kích thước cố định (ví dụ 512 chars/tokens) kèm overlap.
     """
 
-    def __init__(self, chunk_size: int = 512, overlap: int = 50):
+    def __init__(
+        self,
+        chunk_size: int = 512,
+        overlap: int = 50,
+        embedding_pipeline: Optional[EmbeddingPipeline] = None,
+    ):
         self.chunk_size = chunk_size
         self.overlap = overlap
+        self.embedding = embedding_pipeline
 
-    def chunk(self, text: str, document_id: str, metadata: Optional[Dict[str, Any]] = None) -> List[Chunk]:
+    def chunk(
+        self,
+        text: str,
+        document_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[Chunk]:
         base_meta = metadata or {}
         chunks: List[Chunk] = []
         start = 0
@@ -34,13 +45,23 @@ class FixedSizeChunker:
                         document_id=document_id,
                         text=sub_text,
                         strategy=ChunkStrategy.FIXED_SIZE,
-                        metadata={**base_meta, "chunk_index": idx, "start_char": start, "end_char": end},
+                        metadata={
+                            **base_meta,
+                            "chunk_index": idx,
+                            "start_char": start,
+                            "end_char": end,
+                        },
                     )
                 )
                 idx += 1
             if end >= text_len:
                 break
-            start += self.chunk_size - self.overlap
+            start += max(1, self.chunk_size - self.overlap)
+
+        if self.embedding is not None and chunks:
+            vectors = self.embedding.embed_documents([c.text for c in chunks])
+            for c, vec in zip(chunks, vectors):
+                c.embedding = vec
 
         return chunks
 
@@ -56,12 +77,19 @@ class RecursiveCharacterChunker:
         chunk_size: int = 512,
         overlap: int = 50,
         separators: Optional[List[str]] = None,
+        embedding_pipeline: Optional[EmbeddingPipeline] = None,
     ):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.separators = separators or ["\n\n", "\n", ". ", " ", ""]
+        self.embedding = embedding_pipeline
 
-    def chunk(self, text: str, document_id: str, metadata: Optional[Dict[str, Any]] = None) -> List[Chunk]:
+    def chunk(
+        self,
+        text: str,
+        document_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[Chunk]:
         base_meta = metadata or {}
         raw_chunks = self._recursive_split(text, self.separators)
         chunks: List[Chunk] = []
@@ -75,9 +103,19 @@ class RecursiveCharacterChunker:
                         document_id=document_id,
                         text=cleaned,
                         strategy=ChunkStrategy.RECURSIVE,
-                        metadata={**base_meta, "chunk_index": idx, "char_length": len(cleaned)},
+                        metadata={
+                            **base_meta,
+                            "chunk_index": idx,
+                            "char_length": len(cleaned),
+                        },
                     )
                 )
+
+        if self.embedding is not None and chunks:
+            vectors = self.embedding.embed_documents([c.text for c in chunks])
+            for c, vec in zip(chunks, vectors):
+                c.embedding = vec
+
         return chunks
 
     def _recursive_split(self, text: str, separators: List[str]) -> List[str]:
@@ -91,7 +129,7 @@ class RecursiveCharacterChunker:
                 break
             if sep in text:
                 separator = sep
-                new_separators = separators[i + 1:]
+                new_separators = separators[i + 1 :]
                 break
 
         splits = text.split(separator) if separator else list(text)
@@ -129,7 +167,6 @@ class RecursiveCharacterChunker:
                     doc = separator.join(current_doc)
                     if doc.strip():
                         docs.append(doc)
-                    # Keep overlap if possible
                     while total > self.overlap and current_doc:
                         total -= len(current_doc[0]) + len(separator)
                         current_doc.pop(0)
@@ -161,16 +198,22 @@ class SemanticChunker:
     ):
         settings = get_settings()
         self.embedding = embedding_pipeline or EmbeddingPipeline()
-        self.similarity_threshold = similarity_threshold or settings.chunk_similarity_threshold
+        self.similarity_threshold = (
+            similarity_threshold or settings.chunk_similarity_threshold
+        )
         self.min_chunk_size = min_chunk_size or settings.semantic_min_chunk_size
         self.max_chunk_size = max_chunk_size or settings.semantic_max_chunk_size
 
     def split_sentences(self, text: str) -> List[str]:
-        # Phân rã câu hỗ trợ dấu câu Tiếng Việt và Tiếng Anh
         raw = re.split(r"(?<=[.!?。！？])\s+|\n{2,}", text)
         return [s.strip() for s in raw if s.strip()]
 
-    def chunk(self, text: str, document_id: str, metadata: Optional[Dict[str, Any]] = None) -> List[Chunk]:
+    def chunk(
+        self,
+        text: str,
+        document_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[Chunk]:
         base_meta = metadata or {}
         sentences = self.split_sentences(text)
         if not sentences:
@@ -184,15 +227,17 @@ class SemanticChunker:
                     document_id=document_id,
                     text=text,
                     strategy=ChunkStrategy.SEMANTIC,
-                    metadata={**base_meta, "chunk_index": 0, "sentence_count": 1},
+                    metadata={
+                        **base_meta,
+                        "chunk_index": 0,
+                        "sentence_count": len(sentences),
+                    },
                     embedding=emb,
                 )
             ]
 
-        # 1. Sinh vector cho từng câu
         sentence_vectors = np.array(self.embedding.embed_documents(sentences))
 
-        # 2. Đo Cosine Distance giữa các câu liên kề
         similarities = []
         for i in range(len(sentence_vectors) - 1):
             va = sentence_vectors[i]
@@ -202,7 +247,6 @@ class SemanticChunker:
             sim = float(np.dot(va, vb) / (na * nb)) if na > 0 and nb > 0 else 1.0
             similarities.append(sim)
 
-        # 3. Gom cụm theo Breakpoint
         chunks_text: List[str] = []
         current: List[str] = [sentences[0]]
         current_len = len(sentences[0])
@@ -211,7 +255,6 @@ class SemanticChunker:
             next_sent = sentences[i + 1]
             should_break = False
 
-            # Ngưỡng biến thiên ngữ nghĩa
             if sim < self.similarity_threshold and current_len >= self.min_chunk_size:
                 should_break = True
             elif current_len + len(next_sent) > self.max_chunk_size:
@@ -228,7 +271,6 @@ class SemanticChunker:
         if current:
             chunks_text.append(" ".join(current))
 
-        # 4. Sinh vector cho các chunks đã gom
         chunk_embeddings = self.embedding.embed_documents(chunks_text)
         chunks: List[Chunk] = []
 
@@ -239,7 +281,11 @@ class SemanticChunker:
                     document_id=document_id,
                     text=txt,
                     strategy=ChunkStrategy.SEMANTIC,
-                    metadata={**base_meta, "chunk_index": idx, "char_length": len(txt)},
+                    metadata={
+                        **base_meta,
+                        "chunk_index": idx,
+                        "char_length": len(txt),
+                    },
                     embedding=emb,
                 )
             )
@@ -247,23 +293,63 @@ class SemanticChunker:
         return chunks
 
 
+class ChunkerFactory:
+    """
+    Factory khởi tạo chiến lược Chunking linh hoạt theo cấu hình và đảm bảo sinh Embedding.
+    """
+
+    @staticmethod
+    def chunk_document(
+        text: str,
+        document_id: str,
+        strategy: ChunkStrategy = ChunkStrategy.SEMANTIC,
+        metadata: Optional[Dict[str, Any]] = None,
+        embedding_pipeline: Optional[EmbeddingPipeline] = None,
+    ) -> List[Chunk]:
+        settings = get_settings()
+        emb = embedding_pipeline or EmbeddingPipeline()
+
+        if strategy == ChunkStrategy.FIXED_SIZE:
+            chunker = FixedSizeChunker(
+                chunk_size=settings.fixed_chunk_size,
+                overlap=settings.fixed_chunk_overlap,
+                embedding_pipeline=emb,
+            )
+        elif strategy == ChunkStrategy.RECURSIVE:
+            chunker = RecursiveCharacterChunker(
+                chunk_size=settings.fixed_chunk_size,
+                overlap=settings.fixed_chunk_overlap,
+                embedding_pipeline=emb,
+            )
+        else:
+            chunker = SemanticChunker(embedding_pipeline=emb)
+
+        return chunker.chunk(text, document_id=document_id, metadata=metadata)
+
+
 class ChunkingBenchmark:
     """
     Công cụ đo lường và đánh giá so sánh 3 chiến lược chunking.
-    Đo:
-      - Context Completeness (Độ toàn vẹn ngữ cảnh - tỷ lệ giữ nguyên ranh giới câu/đoạn)
-      - Std Dev Length (Độ phân tán độ dài chunk)
-      - Information Loss (Tỷ lệ mất mát thông tin ký tự)
-      - Execution Latency (Thời gian xử lý ms)
     """
 
     @classmethod
-    def run_benchmark(cls, sample_text: str, document_id: str = "benchmark_doc") -> List[ChunkingBenchmarkResult]:
+    def run_benchmark(
+        cls, sample_text: str, document_id: str = "benchmark_doc"
+    ) -> List[ChunkingBenchmarkResult]:
         embedding = EmbeddingPipeline()
         strategies = [
-            ("Fixed-size (512 tokens)", FixedSizeChunker(chunk_size=512, overlap=50)),
-            ("Recursive Character", RecursiveCharacterChunker(chunk_size=512, overlap=50)),
-            ("Semantic (Cosine Shift)", SemanticChunker(embedding_pipeline=embedding)),
+            (
+                "Fixed-size (512 tokens)",
+                FixedSizeChunker(chunk_size=512, overlap=50),
+            ),
+            (
+                "Recursive Character",
+                RecursiveCharacterChunker(chunk_size=512, overlap=50),
+            ),
+            (
+                "Semantic (Cosine Shift)",
+                SemanticChunker(embedding_pipeline=embedding),
+            ),
         ]
 
         results = []
@@ -278,13 +364,13 @@ class ChunkingBenchmark:
             avg_len = float(np.mean(lengths))
             std_len = float(np.std(lengths))
 
-            # Context completeness: Kiểm tra các chunk có kết thúc bằng dấu chấm kết câu không
             complete_boundaries = sum(
-                1 for c in chunks if c.text.endswith((".", "!", "?", "。", "！", "？", "\n"))
+                1
+                for c in chunks
+                if c.text.endswith((".", "!", "?", "。", "！", "？", "\n"))
             )
             completeness = complete_boundaries / max(len(chunks), 1)
 
-            # Information loss: Đo tỷ lệ khác biệt tổng ký tự
             total_chunk_chars = sum(lengths)
             info_loss = max(0.0, 1.0 - (total_chunk_chars / max(original_len, 1)))
 

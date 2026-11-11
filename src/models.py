@@ -59,6 +59,8 @@ class SearchQuery(BaseModel):
     top_k: int = 5
     candidate_pool: int = 20
     use_reranker: bool = True
+    dense_weight: float = 1.0
+    sparse_weight: float = 1.0
     filters: Optional[Dict[str, Any]] = None
 
 
@@ -99,4 +101,6 @@ class HealthResponse(BaseModel):
     postgres_pgvector_connected: bool
     redis_connected: bool
     llm_connected: bool
+    storage_backend: str = "in_memory_dual_store"
+    total_chunks_indexed: int = 0
     active_pipeline: str

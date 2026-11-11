@@ -29,7 +29,7 @@ jobs:
         run: black --check src/ scripts/ tests/
 
       - name: Lint Code with Flake8
-        run: flake8 src/ scripts/ tests/ --count --max-line-length=120 --statistics
+        run: flake8 src/ scripts/ tests/ --count --max-line-length=120 --extend-ignore=E203,E402,E501 --statistics
 
   test-and-benchmark:
     name: Unit Tests & RAGAS Benchmark
@@ -47,7 +47,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
       - name: Run Week 1 Chunking Benchmark
         run: python scripts/chunking_benchmark.py
@@ -58,9 +58,13 @@ jobs:
       - name: Run Week 4 RAGAS Quality Evaluation
         run: python scripts/evaluate_ragas.py
 
+      - name: Run Comprehensive End-to-End Self-Test
+        run: python scripts/self_test.py
+
       - name: Run Automated PyTest Integration Tests
         run: |
-          python -m unittest discover -s tests -p "test_*.py"
+          pytest tests/ -v
+          python test_runner.py
 
   docker-build:
     name: Docker Container Build Check

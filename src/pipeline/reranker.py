@@ -23,15 +23,24 @@ class CrossEncoderReranker:
         if self._initialized:
             return
         self._initialized = True
+        settings = get_settings()
+        if not settings.use_neural_models:
+            self._model = None
+            return
         try:
             from sentence_transformers import CrossEncoder
+
             self._model = CrossEncoder(self.model_name)
             logger.info(f"Đã nạp Cross-Encoder model: {self.model_name}")
         except Exception as e:
-            logger.info(f"Cross-Encoder '{self.model_name}' chưa có sẵn offline ({e}). Kích hoạt bộ tái chấm điểm thuật toán.")
+            logger.info(
+                f"Cross-Encoder '{self.model_name}' chưa có sẵn offline ({e}). Kích hoạt bộ tái chấm điểm thuật toán."
+            )
             self._model = None
 
-    def rerank(self, query: str, candidates: List[Chunk], top_k: int = 5) -> List[Tuple[Chunk, float]]:
+    def rerank(
+        self, query: str, candidates: List[Chunk], top_k: int = 5
+    ) -> List[Tuple[Chunk, float]]:
         if not candidates:
             return []
 
@@ -46,7 +55,9 @@ class CrossEncoderReranker:
                 ranked.sort(key=lambda x: x[1], reverse=True)
                 return ranked[:top_k]
             except Exception as e:
-                logger.warning(f"Lỗi suy luận Cross-Encoder ({e}). Dùng bộ chấm điểm dự phòng.")
+                logger.warning(
+                    f"Lỗi suy luận Cross-Encoder ({e}). Dùng bộ chấm điểm dự phòng."
+                )
 
         # 2. Bộ chấm điểm tương tác sâu dự phòng (Heuristic Cross-Interaction Scorer)
         q_tokens = [t.lower() for t in re.findall(r"\w+", query)]
