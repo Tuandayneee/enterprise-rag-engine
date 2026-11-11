@@ -62,8 +62,10 @@ jobs:
         run: python scripts/self_test.py
 
       - name: Run Automated PyTest Integration Tests
+        env:
+          PYTHONPATH: .
         run: |
-          pytest tests/ -v
+          python -m pytest tests/ -v
           python test_runner.py
 
   docker-build:
